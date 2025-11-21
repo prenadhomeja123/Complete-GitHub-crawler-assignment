@@ -1,0 +1,88 @@
+name: GitHub Repository Crawler
+
+on:
+  workflow_dispatch:  # Manual trigger
+  schedule:
+    - cron: '0 2 * * *'  # Run daily at 2 AM UTC
+
+jobs:
+  crawl-stars:
+    runs-on: ubuntu-latest
+    
+    # PostgreSQL service container
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: github_crawler
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      
+      - name: Setup PostgreSQL schema
+        env:
+          POSTGRES_HOST: localhost
+          POSTGRES_PORT: 5432
+          POSTGRES_DB: github_crawler
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        run: |
+          python setup_postgres.py
+      
+      - name: Crawl GitHub repositories
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          POSTGRES_HOST: localhost
+          POSTGRES_PORT: 5432
+          POSTGRES_DB: github_crawler
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          TARGET_REPO_COUNT: 100000
+          BATCH_SIZE: 1000
+        run: |
+          python crawl_stars.py
+      
+      - name: Export database to CSV
+        env:
+          POSTGRES_HOST: localhost
+          POSTGRES_PORT: 5432
+          POSTGRES_DB: github_crawler
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        run: |
+          python export_database.py repositories.csv
+      
+      - name: Upload database export as artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: crawled-repositories
+          path: repositories.csv
+          retention-days: 30
+      
+      - name: Display crawl summary
+        run: |
+          echo "Crawl completed successfully!"
+          wc -l repositories.csv
+          head -n 20 repositories.csv
+
